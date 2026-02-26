@@ -1,4 +1,4 @@
-# webTracker
+# SSLTracker
 
 SSL domain takip ve indirilebilir sertifika dosyaları. Linux üzerinde çalışır. **Domain’ler başka sunucuda** olduğu için doğrulama **dosya yükleme (HTTP-01 manuel)** ile yapılır: sayfada çıkan dosyayı domain’in yayınlandığı sunucuya yüklersiniz.
 
