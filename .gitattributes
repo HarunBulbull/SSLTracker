@@ -1,0 +1,2 @@
+# Linux scriptleri her zaman LF satır sonu kullansın
+*.sh text eol=lf

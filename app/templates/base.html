@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}SSLTracker{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ['JetBrains Mono', 'Fira Code', 'monospace'] },
+          colors: {
+            panel: '#0f1419',
+            surface: '#1a2332',
+            accent: '#3b82f6',
+            warn: '#f59e0b',
+            danger: '#ef4444',
+            ok: '#22c55e',
+          }
+        }
+      }
+    }
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'JetBrains Mono', monospace; }
+    .status-ok { color: #22c55e; }
+    .status-warning { color: #f59e0b; }
+    .status-critical { color: #ef4444; }
+    .status-expired { color: #ef4444; text-decoration: line-through; }
+    .status-unknown { color: #6b7280; }
+  </style>
+  {% block head %}{% endblock %}
+</head>
+<body class="bg-panel text-gray-200 min-h-screen">
+  <header class="border-b border-gray-700/50 bg-surface/80 backdrop-blur">
+    <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
+      <h1 class="text-xl font-semibold text-accent">SSLTracker</h1>
+      <span class="text-sm text-gray-500">SSL takip & Certbot</span>
+    </div>
+  </header>
+  <main class="max-w-6xl mx-auto px-4 py-6">
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="border-t border-gray-700/50 mt-12 py-4 text-center text-sm text-gray-500">
+    Linux üzerinde çalışır · Certbot ile sertifika üretimi
+  </footer>
+  {% block scripts %}{% endblock %}
+</body>
+</html>
