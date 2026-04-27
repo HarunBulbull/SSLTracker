@@ -84,3 +84,17 @@ async def refresh_all_ssl(db: AsyncSession) -> int:
         _apply_ssl_info(d, info)
     await db.flush()
     return len(domains)
+
+
+async def get_domains_expiring_within_days(db: AsyncSession, days: int):
+    """Belirtilen gün içinde süresi dolacak (0 <= days_until_expiry < days) domainleri getirir."""
+    result = await db.execute(
+        select(Domain)
+        .where(
+            Domain.days_until_expiry.is_not(None),
+            Domain.days_until_expiry >= 0,
+            Domain.days_until_expiry < days,
+        )
+        .order_by(Domain.days_until_expiry.asc(), Domain.domain.asc())
+    )
+    return result.scalars().all()

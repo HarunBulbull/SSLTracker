@@ -34,8 +34,41 @@ Tarayıcı: http://sunucu:8000
 | `WEBTRACKER_DATA` | `./data` |
 | `CERTBOT_EMAIL` | `info@harunbulbul.com` |
 | `CERTBOT_USER_DIR` | `./certs` (proje içi) |
+| `APP_TIMEZONE` | `Europe/Istanbul` |
+| `SMTP_HOST` | (boş) |
+| `SMTP_PORT` | `587` |
+| `SMTP_USERNAME` | (boş) |
+| `SMTP_PASSWORD` | (boş) |
+| `SMTP_USE_TLS` | `true` |
+| `SMTP_USE_SSL` | `false` |
+| `SMTP_FROM_EMAIL` | `SMTP_USERNAME` |
+| `SMTP_TO_EMAILS` | (boş, virgülle çoklu) |
+| `SSL_ALERT_THRESHOLD_DAYS` | `2` |
+| `SSL_ALERT_CRON_HOUR` | `9` |
+| `SSL_ALERT_CRON_MINUTE` | `0` |
 
 Sertifikalar varsayılan olarak `webTracker/certs/live/DOMAIN/` altındadır.
+
+## SMTP cron job (cPanel)
+
+Uygulama her gün `09:00`'da (varsayılan timezone: `Europe/Istanbul`) çalışan bir cron job içerir:
+
+- Önce tüm domainlerin SSL bilgisini yeniler.
+- Süresi `2 günden az` kalan (`0 <= gün < 2`) domainleri bulur.
+- `SMTP_TO_EMAILS` içindeki adreslere SMTP ile özet e-posta gönderir.
+
+Örnek cPanel SMTP değişkenleri:
+
+```bash
+SMTP_HOST=mail.ornekdomain.com
+SMTP_PORT=587
+SMTP_USERNAME=uyari@ornekdomain.com
+SMTP_PASSWORD=super-secret
+SMTP_USE_TLS=true
+SMTP_USE_SSL=false
+SMTP_FROM_EMAIL=uyari@ornekdomain.com
+SMTP_TO_EMAILS=admin@ornekdomain.com,devops@ornekdomain.com
+```
 
 ## Doğrulama dosyası nereye yüklenir?
 
