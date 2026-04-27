@@ -25,6 +25,7 @@ from app.certbot_runner import (
     get_cert_paths,
     read_cert_file,
 )
+from app.mailer import send_test_email
 
 router = APIRouter(prefix="", tags=["domains"])
 
@@ -35,6 +36,8 @@ async def index(request: Request, db: AsyncSession = Depends(get_db)):
     domains = await get_domains(db)
     error = request.query_params.get("error")
     certbot_error = request.query_params.get("certbot_error")
+    test_email = request.query_params.get("test_email")
+    test_email_error = request.query_params.get("test_email_error")
     challenge_job = request.query_params.get("challenge_job")
     domain_id = request.query_params.get("domain_id")
     challenge_domain = challenge_file_name = challenge_file_content = None
@@ -48,6 +51,8 @@ async def index(request: Request, db: AsyncSession = Depends(get_db)):
             "domains": domains,
             "error": error,
             "certbot_error": certbot_error,
+            "test_email": test_email,
+            "test_email_error": test_email_error,
             "challenge_job": challenge_job,
             "challenge_domain_id": int(domain_id) if domain_id and domain_id.isdigit() else None,
             "challenge_domain": challenge_domain,
@@ -55,6 +60,19 @@ async def index(request: Request, db: AsyncSession = Depends(get_db)):
             "challenge_file_content": challenge_file_content,
         },
     )
+
+
+@router.post("/alerts/send-test", response_class=RedirectResponse)
+async def send_test_alert_email(request: Request):
+    """SMTP test e-postasi gonderir."""
+    url = str(request.url_for("index"))
+    try:
+        sent = await send_test_email()
+        if not sent:
+            return RedirectResponse(url=url + "?test_email=config_error", status_code=303)
+        return RedirectResponse(url=url + "?test_email=ok", status_code=303)
+    except Exception as e:
+        return RedirectResponse(url=url + "?test_email_error=" + quote((str(e)[:400] or "Bilinmeyen hata")), status_code=303)
 
 
 @router.post("/domains/add", response_class=RedirectResponse)

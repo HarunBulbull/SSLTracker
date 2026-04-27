@@ -2,6 +2,7 @@
 import asyncio
 import logging
 import smtplib
+from datetime import datetime, timezone
 from email.message import EmailMessage
 from typing import Iterable
 
@@ -64,5 +65,34 @@ async def send_ssl_alert_email(domains: Iterable) -> bool:
         return False
 
     message = _build_ssl_alert_email(domains)
+    await asyncio.to_thread(_send_email_sync, message)
+    return True
+
+
+def _build_test_email() -> EmailMessage:
+    msg = EmailMessage()
+    msg["Subject"] = "[SSLTracker] SMTP test e-postasi"
+    msg["From"] = SMTP_FROM_EMAIL
+    msg["To"] = ", ".join(SMTP_TO_EMAILS)
+    now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    msg.set_content(
+        "\n".join(
+            [
+                "Bu bir SSLTracker SMTP test e-postasidir.",
+                f"Gonderim zamani: {now_utc}",
+                "",
+                "Bu mesaj elle tetiklenen test butonundan gonderildi.",
+            ]
+        )
+    )
+    return msg
+
+
+async def send_test_email() -> bool:
+    """SMTP ayarlari uygunsa test e-postasi gonderir."""
+    if not SMTP_HOST or not SMTP_TO_EMAILS:
+        logger.warning("SMTP ayarlari eksik: SMTP_HOST veya SMTP_TO_EMAILS tanimli degil.")
+        return False
+    message = _build_test_email()
     await asyncio.to_thread(_send_email_sync, message)
     return True

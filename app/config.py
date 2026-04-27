@@ -1,8 +1,10 @@
 """Uygulama yapılandırması."""
 import os
 from pathlib import Path
+from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / ".env")
 DATA_DIR = Path(os.environ.get("WEBTRACKER_DATA", str(BASE_DIR / "data")))
 DB_PATH = DATA_DIR / "webtracker.db"
 # Sertifikalar proje klasöründe (webTracker/certs)

@@ -14,6 +14,19 @@
       <span class="text-gray-500 text-xs">Detay: sunucuda <code>certs/logs/letsencrypt.log</code> dosyasına bakın.</span>
     </div>
     {% endif %}
+    {% if test_email == 'ok' %}
+    <div class="rounded-lg border border-ok/50 bg-ok/10 px-4 py-2 text-ok text-sm">Test e-postasi basariyla gonderildi.</div>
+    {% elif test_email == 'config_error' %}
+    <div class="rounded-lg border border-warn/50 bg-warn/10 px-4 py-2 text-warn text-sm">
+      SMTP ayarlari eksik. <code>SMTP_HOST</code> ve <code>SMTP_TO_EMAILS</code> degerlerini kontrol edin.
+    </div>
+    {% endif %}
+    {% if test_email_error %}
+    <div class="rounded-lg border border-danger/50 bg-danger/10 px-4 py-2 text-danger text-sm">
+      <strong>Test e-postasi gonderilemedi:</strong><br>
+      <span class="whitespace-pre-wrap">{{ test_email_error }}</span>
+    </div>
+    {% endif %}
     {% if challenge_job and challenge_file_name and challenge_file_content and challenge_domain_id %}
     <div class="rounded-lg border border-accent/50 bg-accent/10 p-4">
       <h3 class="font-semibold text-accent mb-2">Doğrulama dosyasını yükleyin (domain başka sunucuda)</h3>
@@ -46,6 +59,11 @@
         </div>
         <button type="submit" class="px-4 py-2 bg-accent hover:bg-blue-600 rounded font-medium transition">
           Ekle
+        </button>
+      </form>
+      <form action="{{ url_for('send_test_alert_email') }}" method="post" class="inline">
+        <button type="submit" class="px-4 py-2 bg-surface border border-accent/60 text-accent hover:bg-accent/10 rounded font-medium transition">
+          Test e-postasi gonder
         </button>
       </form>
     </section>

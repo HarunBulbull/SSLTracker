@@ -7,3 +7,4 @@ python-multipart>=0.0.6
 cryptography>=42.0.0
 apscheduler>=3.10.0
 httpx>=0.26.0
+python-dotenv>=1.0.1
