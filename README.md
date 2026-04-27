@@ -1,4 +1,4 @@
-# webTracker
+# SSLTracker
 
 SSL domain takip ve indirilebilir sertifika dosyaları. Linux üzerinde çalışır. **Domain’ler başka sunucuda** olduğu için doğrulama **dosya yükleme (HTTP-01 manuel)** ile yapılır: sayfada çıkan dosyayı domain’in yayınlandığı sunucuya yüklersiniz.
 
@@ -11,7 +11,7 @@ SSL domain takip ve indirilebilir sertifika dosyaları. Linux üzerinde çalış
 ## Kurulum
 
 ```bash
-cd webTracker
+cd SSLTracker
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
