@@ -41,6 +41,9 @@ SMTP_USE_SSL = _env_bool("SMTP_USE_SSL", False)
 SMTP_FROM_EMAIL = os.environ.get("SMTP_FROM_EMAIL", SMTP_USERNAME or "noreply@localhost")
 SMTP_TO_EMAILS = [item.strip() for item in os.environ.get("SMTP_TO_EMAILS", "").split(",") if item.strip()]
 
+# ACME doğrulama dosyası hazır olunca otomatik indir
+AUTO_DOWNLOAD_CHALLENGE = _env_bool("AUTO_DOWNLOAD_CHALLENGE", False)
+
 # SSL bitiş uyarı cron ayarları
 SSL_ALERT_THRESHOLD_DAYS = int(os.environ.get("SSL_ALERT_THRESHOLD_DAYS", "2"))
 SSL_ALERT_CRON_HOUR = int(os.environ.get("SSL_ALERT_CRON_HOUR", "9"))
