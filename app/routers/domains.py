@@ -17,17 +17,26 @@ from app.crud import (
 )
 from app.database import get_db
 from app.schemas import DomainCreate, DomainResponse, DomainUpdate
-from app.config import CERTBOT_EMAIL
+from app.config import AUTO_DOWNLOAD_CHALLENGE, CERTBOT_EMAIL, CERTBOT_WEBROOT
 from app.certbot_runner import (
-    run_certbot_http_manual,
-    continue_certbot_http,
+    run_certbot,
+    start_certbot_http_manual,
+    start_continue_certbot_http,
     get_pending_http_file,
+    get_pending_http_status,
     get_cert_paths,
     read_cert_file,
+    read_ca_bundle_bytes,
 )
 from app.mailer import send_test_email
 
 router = APIRouter(prefix="", tags=["domains"])
+
+def _template_url_for(request: Request):
+    def url_for(name: str, **path_params):
+        return str(request.url_for(name, **path_params))
+
+    return url_for
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -40,14 +49,24 @@ async def index(request: Request, db: AsyncSession = Depends(get_db)):
     test_email_error = request.query_params.get("test_email_error")
     challenge_job = request.query_params.get("challenge_job")
     domain_id = request.query_params.get("domain_id")
+    pending = request.query_params.get("pending") == "1"
+    completing = request.query_params.get("completing") == "1"
+    renew_success = request.query_params.get("renew_success") == "1"
     challenge_domain = challenge_file_name = challenge_file_content = None
-    if challenge_job and domain_id:
-        challenge_domain, challenge_file_name, challenge_file_content = get_pending_http_file(challenge_job)
+    if challenge_job:
+        status = get_pending_http_status(challenge_job)
+        if status.get("status") == "ready":
+            challenge_domain = status.get("domain")
+            challenge_file_name = status.get("file_name")
+            challenge_file_content = status.get("file_content")
+        elif not pending and not completing:
+            challenge_domain, challenge_file_name, challenge_file_content = get_pending_http_file(challenge_job)
     tmpl = request.app.state.templates
     return tmpl.TemplateResponse(
         "index.html",
         {
             "request": request,
+            "url_for": _template_url_for(request),
             "domains": domains,
             "error": error,
             "certbot_error": certbot_error,
@@ -58,6 +77,10 @@ async def index(request: Request, db: AsyncSession = Depends(get_db)):
             "challenge_domain": challenge_domain,
             "challenge_file_name": challenge_file_name,
             "challenge_file_content": challenge_file_content,
+            "pending": pending,
+            "completing": completing,
+            "renew_success": renew_success,
+            "auto_download_challenge": AUTO_DOWNLOAD_CHALLENGE,
         },
     )
 
@@ -129,15 +152,18 @@ async def refresh_domain_ssl(
     d = await get_domain_by_id(db, domain_id)
     if not d:
         raise HTTPException(status_code=404, detail="Domain bulunamadı")
-    job_id, file_name, file_content, err = await run_certbot_http_manual(
+    job_id, err = await start_certbot_http_manual(
         domain=d.domain,
         email=CERTBOT_EMAIL,
         domain_id=domain_id,
     )
     url = str(request.url_for("index"))
-    if err:
-        return RedirectResponse(url=url + "?certbot_error=" + quote((err[:400] or "Bilinmeyen hata")), status_code=303)
-    return RedirectResponse(url=url + f"?challenge_job={job_id}&domain_id={domain_id}", status_code=303)
+    if err or not job_id:
+        return RedirectResponse(url=url + "?certbot_error=" + quote((err[:400] if err else "İş başlatılamadı")), status_code=303)
+    return RedirectResponse(
+        url=url + f"?challenge_job={job_id}&domain_id={domain_id}&pending=1",
+        status_code=303,
+    )
 
 
 @router.post("/domains/{domain_id}/refresh-challenge-continue", response_class=RedirectResponse)
@@ -151,17 +177,40 @@ async def refresh_challenge_continue(
     d = await get_domain_by_id(db, domain_id)
     if not d:
         raise HTTPException(status_code=404, detail="Domain bulunamadı")
-    result = await continue_certbot_http(job_id)
+    started, err = await start_continue_certbot_http(job_id, domain_id)
     url = str(request.url_for("index"))
-    if result.success:
-        d.cert_path = result.cert_path
-        d.key_path = result.key_path
-        d.chain_path = result.chain_path
-        await db.flush()
-    await refresh_ssl(db, d)
-    if not result.success and result.error:
-        return RedirectResponse(url=url + "?certbot_error=" + quote((result.error[:400] or "Bilinmeyen hata")), status_code=303)
-    return RedirectResponse(url=url, status_code=303)
+    if not started:
+        return RedirectResponse(url=url + "?certbot_error=" + quote((err[:400] if err else "İş başlatılamadı")), status_code=303)
+    return RedirectResponse(
+        url=url + f"?challenge_job={job_id}&domain_id={domain_id}&completing=1",
+        status_code=303,
+    )
+
+
+@router.get("/api/renew-jobs/{job_id}/status")
+async def renew_job_status(job_id: str):
+    """HTTP-01 yenileme işinin durumunu döndürür."""
+    return get_pending_http_status(job_id)
+
+
+@router.get("/api/renew-jobs/{job_id}/download-challenge")
+async def download_challenge_file(job_id: str):
+    """ACME HTTP-01 doğrulama dosyasını (adı ve içeriği hazır) indirir."""
+    status = get_pending_http_status(job_id)
+    file_name = status.get("file_name")
+    file_content = status.get("file_content")
+    if not file_name or file_content is None:
+        domain, file_name, file_content = get_pending_http_file(job_id)
+        if not file_name or file_content is None:
+            raise HTTPException(status_code=404, detail="Doğrulama dosyası bulunamadı")
+    safe_name = file_name.replace('"', "").replace("\\", "").replace("/", "")
+    return Response(
+        content=file_content.encode("utf-8"),
+        media_type="text/plain",
+        headers={
+            "Content-Disposition": f'attachment; filename="{safe_name}"',
+        },
+    )
 
 
 @router.get("/api/domains", response_model=list[DomainResponse])
@@ -259,14 +308,14 @@ async def download_fullchain(domain_id: int, db: AsyncSession = Depends(get_db))
 
 @router.get("/api/domains/{domain_id}/download/chain")
 async def download_chain(domain_id: int, db: AsyncSession = Depends(get_db)):
-    """CA bundle (chain.pem) indirir."""
+    """CA bundle (yalnızca ara sertifikalar) indirir."""
     d = await get_domain_by_id(db, domain_id)
     if not d:
         raise HTTPException(status_code=404, detail="Domain bulunamadı")
-    result = get_cert_paths(d.domain)
-    if not result.success or not result.chain_path:
+    content = read_ca_bundle_bytes(d.domain)
+    if content is None:
+        result = get_cert_paths(d.domain)
         _raise_cert_error(result, "CA bundle dosyası yok")
-    content = read_cert_file(result.chain_path)
     filename = d.domain.replace(".", "_") + "_cabundle.pem"
     return _download_response(content, filename)
 
