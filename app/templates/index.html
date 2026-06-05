@@ -27,28 +27,61 @@
       <span class="whitespace-pre-wrap">{{ test_email_error }}</span>
     </div>
     {% endif %}
+    {% if pending and challenge_job and challenge_domain_id %}
+    <div id="pending-banner" class="rounded-lg border border-accent/50 bg-accent/10 px-4 py-3 text-sm text-accent">
+      Certbot başlatılıyor, doğrulama dosyası hazırlanıyor…
+    </div>
+    {% endif %}
+    {% if completing and challenge_job and challenge_domain_id %}
+    <div id="completing-banner" class="rounded-lg border border-accent/50 bg-accent/10 px-4 py-3 text-sm text-accent">
+      Sertifika üretiliyor, lütfen bekleyin…
+    </div>
+    {% endif %}
+    {% if renew_success and challenge_domain_id %}
+    <div class="rounded-lg border border-ok/50 bg-ok/10 px-4 py-2 text-ok text-sm">
+      Sertifika başarıyla yenilendi.
+    </div>
+    {% endif %}
     {% if challenge_job and challenge_file_name and challenge_file_content and challenge_domain_id %}
     <div class="rounded-lg border border-accent/50 bg-accent/10 p-4">
-      <h3 class="font-semibold text-accent mb-2">Doğrulama dosyasını yükleyin (domain başka sunucuda)</h3>
-      <p class="text-sm text-gray-400 mb-2">
-        <strong>{{ challenge_domain }}</strong> domain’inin yayınlandığı sunucuda aşağıdaki dosyayı oluşturun (FTP/SFTP veya hosting paneli ile). Sonra butona basın.
+      <h3 class="font-semibold text-accent mb-2">Doğrulama dosyasını sunucuya yükleyin</h3>
+      <p class="text-sm text-gray-400 mb-3">
+        <strong>{{ challenge_domain }}</strong> için hazır dosyayı indirin, sunucuda
+        <code>.well-known/acme-challenge/</code> klasörüne yükleyin (FTP/SFTP veya hosting paneli), ardından tamamlayın.
       </p>
-      <div class="mb-2 text-sm">
-        <span class="text-gray-500">Dosya yolu (sunucuda):</span>
+      <div class="mb-3 text-sm">
+        <span class="text-gray-500">Sunucudaki hedef yol:</span>
         <code class="block mt-1 p-2 bg-panel rounded break-all">.well-known/acme-challenge/{{ challenge_file_name }}</code>
       </div>
-      <div class="mb-4 text-sm">
-        <span class="text-gray-500">Dosya içeriği (tam olarak bu metin olsun):</span>
-        <code class="block mt-1 p-2 bg-panel rounded break-all">{{ challenge_file_content }}</code>
+      <div class="flex flex-wrap items-center gap-3 mb-4">
+        <a href="{{ url_for('download_challenge_file', job_id=challenge_job) }}"
+           id="download-challenge-btn"
+           class="px-4 py-2 bg-ok/20 border border-ok/50 text-ok hover:bg-ok/30 rounded font-medium text-sm transition">
+          Doğrulama dosyasını indir ({{ challenge_file_name }})
+        </a>
+        <span class="text-xs text-gray-500">Dosya adı ve içerik hazır gelir; kopyala-yapıştır gerekmez.</span>
       </div>
+      <details class="mb-4 text-sm">
+        <summary class="text-gray-500 cursor-pointer hover:text-gray-300">İçeriği elle kopyalamak isterseniz</summary>
+        <code class="block mt-2 p-2 bg-panel rounded break-all">{{ challenge_file_content }}</code>
+      </details>
       <form action="{{ url_for('refresh_challenge_continue', domain_id=challenge_domain_id) }}" method="post">
         <input type="hidden" name="challenge_job" value="{{ challenge_job }}">
-        <button type="submit" class="px-4 py-2 bg-accent hover:bg-blue-600 rounded font-medium text-sm">
+        <button type="submit" id="continue-challenge-btn" class="px-4 py-2 bg-accent hover:bg-blue-600 rounded font-medium text-sm">
           Dosyayı yükledim, sertifika üretimini tamamla
         </button>
       </form>
     </div>
     {% endif %}
+    <section class="rounded-lg border border-gray-700/50 bg-surface/50 p-4">
+      <h2 class="text-sm font-semibold text-gray-300 mb-3">Ayarlar</h2>
+      <label class="inline-flex items-center gap-2 cursor-pointer text-sm">
+        <input type="checkbox" id="auto-download-challenge" class="rounded border-gray-600 bg-panel text-accent focus:ring-accent">
+        <span>Doğrulama dosyası hazır olunca otomatik indir</span>
+      </label>
+      <p class="text-xs text-gray-500 mt-2">Ayar tarayıcınızda saklanır. Sunucu varsayılanı: <code>AUTO_DOWNLOAD_CHALLENGE</code></p>
+    </section>
+
     <section class="flex flex-wrap items-end gap-4">
       <form action="{{ url_for('add_domain') }}" method="post" class="flex flex-wrap items-end gap-3">
         <div>
@@ -105,8 +138,8 @@
               {% if d.expires_at %}{{ d.expires_at.strftime('%Y-%m-%d %H:%M') }}{% else %}—{% endif %}
             </td>
             <td class="px-4 py-3 flex flex-wrap gap-2">
-              <form action="{{ url_for('refresh_domain_ssl', domain_id=d.id) }}" method="post" class="inline">
-                <button type="submit" class="text-sm text-accent hover:underline">Yenile</button>
+              <form action="{{ url_for('refresh_domain_ssl', domain_id=d.id) }}" method="post" class="inline renew-form">
+                <button type="submit" class="text-sm text-accent hover:underline renew-btn">Yenile</button>
               </form>
               <form action="{{ url_for('remove_domain', domain_id=d.id) }}" method="post" class="inline" onsubmit="return confirm('Bu domaini silmek istediğinize emin misiniz?');">
                 <button type="submit" class="text-sm text-danger hover:underline">Sil</button>
@@ -131,7 +164,121 @@
     </section>
 
     <p class="text-sm text-gray-500">
-      <strong>Yenile</strong> sertifika doğrulaması için bir dosya bilgisi verir. Bu dosyayı domain’in yayınlandığı sunucuda <code>.well-known/acme-challenge/</code> altına yükleyip “tamamla” deyin; sertifikalar <code>certs/live/DOMAIN/</code> altında oluşur. <strong>İndir</strong>: .crt, cabundle, .key dosyalarını indirin.
+      <strong>Yenile</strong> ACME doğrulama dosyasını indirmenizi sağlar; bu dosyayı domain sunucusunda <code>.well-known/acme-challenge/</code> altına yükleyip “tamamla” deyin. Sertifikalar <code>certs/live/DOMAIN/</code> altında oluşur. Tablodaki <strong>İndir</strong> sütunu: .crt, fullchain, cabundle, .key.
     </p>
   </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  const STORAGE_KEY = 'ssltracker_auto_download_challenge';
+  const serverDefault = {{ 'true' if auto_download_challenge else 'false' }};
+
+  function isAutoDownloadEnabled() {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved === null) return serverDefault;
+      return saved === '1';
+    } catch (_) {
+      return serverDefault;
+    }
+  }
+
+  function setAutoDownloadEnabled(enabled) {
+    localStorage.setItem(STORAGE_KEY, enabled ? '1' : '0');
+  }
+
+  const autoDownloadEl = document.getElementById('auto-download-challenge');
+  if (autoDownloadEl) {
+    autoDownloadEl.checked = isAutoDownloadEnabled();
+    autoDownloadEl.addEventListener('change', () => {
+      setAutoDownloadEnabled(autoDownloadEl.checked);
+    });
+  }
+
+  document.querySelectorAll('.renew-form').forEach((form) => {
+    form.addEventListener('submit', () => {
+      const btn = form.querySelector('.renew-btn');
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Başlatılıyor…';
+      }
+    });
+  });
+
+  function triggerChallengeDownload(jobId) {
+    const link = document.createElement('a');
+    link.href = `/api/renew-jobs/${jobId}/download-challenge`;
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  const challengeJob = params.get('challenge_job');
+  const domainId = params.get('domain_id');
+  const pending = params.get('pending') === '1';
+  const completing = params.get('completing') === '1';
+  const renewSuccess = params.get('renew_success') === '1';
+  const hasChallengeFile = !!document.getElementById('download-challenge-btn');
+
+  if (renewSuccess && window.history.replaceState) {
+    window.history.replaceState({}, '', '/');
+  }
+
+  if (hasChallengeFile && challengeJob && isAutoDownloadEnabled() && !sessionStorage.getItem(`challenge-dl-${challengeJob}`)) {
+    triggerChallengeDownload(challengeJob);
+    sessionStorage.setItem(`challenge-dl-${challengeJob}`, '1');
+  }
+
+  async function pollRenewStatus() {
+    if (!challengeJob) return;
+    try {
+      const res = await fetch(`/api/renew-jobs/${challengeJob}/status`);
+      const data = await res.json();
+      if (pending) {
+        if (data.status === 'ready') {
+          if (isAutoDownloadEnabled()) {
+            triggerChallengeDownload(challengeJob);
+            sessionStorage.setItem(`challenge-dl-${challengeJob}`, '1');
+          }
+          window.location.href = `/?challenge_job=${challengeJob}&domain_id=${domainId}`;
+          return;
+        }
+        if (data.status === 'error') {
+          const msg = encodeURIComponent((data.error || 'Certbot hatası').slice(0, 400));
+          window.location.href = `/?certbot_error=${msg}`;
+          return;
+        }
+      }
+      if (completing) {
+        if (data.status === 'done' && data.success) {
+          window.location.href = `/?renew_success=1&domain_id=${domainId}`;
+          return;
+        }
+        if (data.status === 'error' || (data.status === 'done' && !data.success)) {
+          const msg = encodeURIComponent((data.error || 'Certbot hatası').slice(0, 400));
+          window.location.href = `/?certbot_error=${msg}`;
+          return;
+        }
+      }
+    } catch (_) {}
+    setTimeout(pollRenewStatus, 2000);
+  }
+
+  if ((pending || completing) && challengeJob) {
+    pollRenewStatus();
+  }
+
+  const continueBtn = document.getElementById('continue-challenge-btn');
+  if (continueBtn) {
+    continueBtn.closest('form')?.addEventListener('submit', () => {
+      continueBtn.disabled = true;
+      continueBtn.textContent = 'Tamamlanıyor…';
+    });
+  }
+})();
+</script>
 {% endblock %}
