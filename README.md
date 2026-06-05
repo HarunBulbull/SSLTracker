@@ -5,7 +5,7 @@ SSL domain takip ve indirilebilir sertifika dosyaları. Linux üzerinde çalış
 ## Ne yapar?
 
 - Domain ekleyip listelersiniz; SSL bitiş süresi gösterilir.
-- **Yenile**: Certbot **HTTP-01 (manuel)** ile sertifika başlatır. Sayfada **dosya adı ve içeriği** çıkar. Bu dosyayı domain’in yayınlandığı sunucuda `.well-known/acme-challenge/` altına yükleyip (FTP/SFTP veya hosting paneli) “Dosyayı yükledim, tamamla” butonuna basarsınız. Sertifikalar proje klasöründe `certs/live/DOMAIN/` altında oluşur.
+- **Yenile**: Certbot **HTTP-01 (manuel)** ile sertifika başlatır. Sayfada **doğrulama dosyasını indir** butonu çıkar (dosya adı ve içerik hazır). İndirip domain’in yayınlandığı sunucuda `.well-known/acme-challenge/` altına yükleyin (FTP/SFTP veya hosting paneli), ardından “Dosyayı yükledim, tamamla” butonuna basın. Sertifikalar proje klasöründe `certs/live/DOMAIN/` altında oluşur.
 - **İndir**: .crt, fullchain, cabundle, .key dosyalarını indirirsiniz (başka sunucuda kullanmak için).
 
 ## Kurulum
@@ -43,6 +43,7 @@ Tarayıcı: http://sunucu:8000
 | `SMTP_USE_SSL` | `false` |
 | `SMTP_FROM_EMAIL` | `SMTP_USERNAME` |
 | `SMTP_TO_EMAILS` | (boş, virgülle çoklu) |
+| `AUTO_DOWNLOAD_CHALLENGE` | `false` (doğrulama dosyası hazır olunca otomatik indir) |
 | `SSL_ALERT_THRESHOLD_DAYS` | `2` |
 | `SSL_ALERT_CRON_HOUR` | `9` |
 | `SSL_ALERT_CRON_MINUTE` | `0` |
@@ -72,9 +73,10 @@ SMTP_TO_EMAILS=admin@ornekdomain.com,devops@ornekdomain.com
 
 ## Doğrulama dosyası nereye yüklenir?
 
-Domain’in **yayınlandığı sunucuda** (harunbulbul.com’un işaret ettiği sunucu) şu dosyayı oluşturun:
+Domain’in **yayınlandığı sunucuda** (harunbulbul.com’un işaret ettiği sunucu) şu dosyayı yükleyin:
 
-- **Yol:** `.well-known/acme-challenge/DOSYA_ADI` (DOSYA_ADI sayfada yazıyor)
-- **İçerik:** Sayfada gösterilen metin (tek satır, aynen kopyalayın)
+- **İndir:** Sayfadaki “Doğrulama dosyasını indir” butonu (dosya adı ve içerik hazır gelir)
+- **Yol:** `.well-known/acme-challenge/DOSYA_ADI` (indirilen dosyanın adı aynen kullanılır)
+- **İçerik:** İndirilen dosyada zaten yazılıdır; elle kopyalamaya gerek yoktur
 
 Örnek: web root’unuz `/var/www/html` ise dosya `/var/www/html/.well-known/acme-challenge/xyz123` olmalı. Nginx/Apache’de `/.well-known/acme-challenge/` path’inin bu dizine yönlendiğinden emin olun. Dosyayı yükledikten sonra “Dosyayı yükledim, sertifika üretimini tamamla” butonuna basın.
