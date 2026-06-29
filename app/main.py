@@ -24,25 +24,37 @@ from app.routers import domains
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 logger = logging.getLogger(__name__)
 
 
 async def scheduled_ssl_refresh():
     """Arka planda tüm domainlerin SSL bilgisini yeniler."""
-    async with AsyncSessionLocal() as db:
-        await refresh_all_ssl(db)
-        await db.commit()
+    try:
+        async with AsyncSessionLocal() as db:
+            await refresh_all_ssl(db)
+            await db.commit()
+    except Exception:
+        logger.exception("Zamanli SSL yenileme basarisiz")
 
 
 async def scheduled_ssl_expiry_alert():
     """Her sabah kritik SSL sürelerini e-posta ile bildirir."""
-    async with AsyncSessionLocal() as db:
-        await refresh_all_ssl(db)
-        expiring_domains = await get_domains_expiring_within_days(db, SSL_ALERT_THRESHOLD_DAYS)
-        sent = await send_ssl_alert_email(expiring_domains)
-        await db.commit()
-        if sent:
-            logger.info("SSL bitis uyarisi gonderildi. Adet: %s", len(expiring_domains))
+    try:
+        async with AsyncSessionLocal() as db:
+            await refresh_all_ssl(db)
+            expiring_domains = await get_domains_expiring_within_days(db, SSL_ALERT_THRESHOLD_DAYS)
+            sent = await send_ssl_alert_email(expiring_domains)
+            await db.commit()
+            if sent:
+                logger.info("SSL bitis uyarisi gonderildi. Adet: %s", len(expiring_domains))
+            else:
+                logger.info("SSL uyari maili gonderilmedi (kritik domain yok veya SMTP eksik).")
+    except Exception:
+        logger.exception("Zamanli SSL uyari maili basarisiz")
 
 
 @asynccontextmanager
