@@ -42,14 +42,17 @@ def _build_ssl_alert_email(domains: Iterable) -> EmailMessage:
 def _send_email_sync(message: EmailMessage) -> None:
     if SMTP_USE_SSL:
         with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=30) as server:
+            server.ehlo()
             if SMTP_USERNAME:
                 server.login(SMTP_USERNAME, SMTP_PASSWORD)
             server.send_message(message)
         return
 
     with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as server:
+        server.ehlo()
         if SMTP_USE_TLS:
             server.starttls()
+            server.ehlo()
         if SMTP_USERNAME:
             server.login(SMTP_USERNAME, SMTP_PASSWORD)
         server.send_message(message)
