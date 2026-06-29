@@ -3,3 +3,4 @@ data/
 certs/
 __pycache__/
 *.pyc
+.env
