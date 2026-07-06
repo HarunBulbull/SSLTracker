@@ -1,6 +1,7 @@
 """Certbot ile sertifika üretimi."""
 import asyncio
 import logging
+import os
 import re
 import shutil
 import tempfile
@@ -39,6 +40,39 @@ def _sanitize_domain(domain: str) -> str:
     return re.sub(r"[^a-z0-9.-]", "", domain)
 
 
+# İki parçalı kamu sonekleri: apex tespiti için (imhotep.com.tr -> apex)
+_MULTI_LABEL_SUFFIXES = {
+    "com.tr", "net.tr", "org.tr", "gen.tr", "web.tr", "info.tr", "biz.tr",
+    "av.tr", "dr.tr", "bel.tr", "pol.tr", "edu.tr", "gov.tr", "k12.tr",
+    "name.tr", "tv.tr",
+    "co.uk", "org.uk", "me.uk", "com.au", "net.au", "org.au",
+    "co.nz", "com.br", "com.mx", "co.in", "co.za", "com.cn",
+}
+
+
+def expand_domains(domain: str) -> list[str]:
+    """
+    Sertifikanın kapsayacağı isim listesi; ilk eleman birincildir (cert-name olur).
+    apex -> [apex, www.apex]; www.apex -> [www.apex, apex];
+    diğer alt domainler ve wildcard olduğu gibi kalır.
+    """
+    raw = domain.strip().lower()
+    if raw.startswith("*."):
+        return [raw]
+    d = _sanitize_domain(raw)
+    if not d:
+        return []
+    labels = d.split(".")
+    if labels[0] == "www" and len(labels) >= 3:
+        return [d, d[4:]]
+    is_apex = len(labels) == 2 or (
+        len(labels) == 3 and ".".join(labels[-2:]) in _MULTI_LABEL_SUFFIXES
+    )
+    if is_apex:
+        return [d, f"www.{d}"]
+    return [d]
+
+
 async def run_certbot(
     domain: str,
     email: str,
@@ -65,8 +99,15 @@ async def run_certbot(
         "--agree-tos",
         "--email",
         email,
-        "-d",
-        domain if domain.startswith("*.") else sanitized,
+        # Mevcut sertifikaya isim eklenirken (örn. www) sormadan genişlet
+        "--cert-name",
+        sanitized,
+        "--expand",
+        "--renew-with-new-domains",
+    ]
+    for name in expand_domains(domain):
+        cmd.extend(["-d", name])
+    cmd.extend([
         # Root olmadan çalışsın: config/work/logs kullanıcı dizinine yazılır
         "--config-dir",
         str(CERTBOT_USER_DIR),
@@ -74,7 +115,7 @@ async def run_certbot(
         str(CERTBOT_USER_WORK),
         "--logs-dir",
         str(CERTBOT_USER_LOGS),
-    ]
+    ])
     if dry_run:
         cmd.append("--dry-run")
     if webroot:
@@ -187,7 +228,7 @@ async def run_certbot_dns_manual(domain: str, email: str, domain_id: int) -> tup
     )
     hook_script.chmod(0o755)
 
-    env = {**__import__("os").environ, "CERTBOT_DNS_WAIT_DIR": str(temp_dir)}
+    env = {**os.environ, "CERTBOT_DNS_WAIT_DIR": str(temp_dir)}
     cmd = [
         certbot,
         "certonly",
@@ -239,46 +280,128 @@ async def run_certbot_dns_manual(domain: str, email: str, domain_id: int) -> tup
         return None, None, None, str(e)
 
 
-async def continue_certbot_http(job_id: str) -> CertbotResult:
-    """HTTP-01 işinde kullanıcı dosyayı yükledikten sonra certbot'u devam ettirir."""
-    if job_id not in _pending_http:
+def _register_new_challenges(entry: dict) -> int:
+    """
+    temp_dir'de hook'un yazdığı yeni doğrulama dosyalarını challenge listesine ekler.
+    Birden çok domain (örn. apex + www) için certbot hook'u her domain için ayrı çağırır.
+    """
+    temp_dir = entry.get("temp_dir")
+    if not temp_dir:
+        return 0
+    known = {c["file_name"] for c in entry.get("challenges", [])}
+    new_count = 0
+    for val_file in sorted(Path(temp_dir).glob("validation_*")):
+        token = val_file.name[len("validation_"):]
+        if not token or token in known:
+            continue
+        domain_file = Path(temp_dir) / f"domain_{token}"
+        try:
+            challenge_domain = domain_file.read_text(encoding="utf-8").strip() if domain_file.exists() else None
+            file_content = val_file.read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        entry.setdefault("challenges", []).append({
+            "file_name": token,
+            "file_content": file_content,
+            "domain": challenge_domain or entry.get("domain"),
+            "released": False,
+        })
+        new_count += 1
+    if new_count:
+        current = entry["challenges"][-1]
+        entry["file_name"] = current["file_name"]
+        entry["file_content"] = current["file_content"]
+        entry["challenge_domain"] = current["domain"]
+    return new_count
+
+
+async def _finalize_http_job(job_id: str, domain_id: int) -> None:
+    """Certbot süreci bittiğinde sonucu belirler, DB'yi günceller, geçici dizini siler."""
+    entry = _pending_http.get(job_id)
+    if not entry:
+        return
+    proc = entry.get("proc")
+    io_task = entry.get("io_task")
+    stdout = stderr = b""
+    if io_task:
+        try:
+            stdout, stderr = await io_task
+        except Exception:
+            pass
+    if proc and proc.returncode != 0:
+        err = (stderr or stdout or b"").decode("utf-8", errors="replace").strip()
+        result = CertbotResult(False, None, None, None, None, err or f"Çıkış kodu: {proc.returncode}")
+    else:
+        result = get_cert_paths(entry["domain"])
+        if not result.success:
+            result = CertbotResult(False, None, None, None, None, "Sertifika dosyası oluşturulmadı")
+    entry["result"] = result
+    entry["success"] = result.success
+    entry["error"] = result.error
+    entry["status"] = "done" if result.success else "error"
+    temp_dir = entry.get("temp_dir")
+    if temp_dir:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+    entry["temp_dir"] = None
+    entry["proc"] = None
+
+    if result.success:
+        from app.crud import get_domain_by_id, refresh_ssl
+        from app.database import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as db:
+            domain = await get_domain_by_id(db, domain_id)
+            if domain:
+                domain.cert_path = result.cert_path
+                domain.key_path = result.key_path
+                domain.chain_path = result.chain_path
+                await refresh_ssl(db, domain)
+                await db.commit()
+
+
+async def continue_certbot_http(job_id: str, domain_id: int) -> CertbotResult | None:
+    """
+    Kullanıcı doğrulama dosyasını yükledikten sonra certbot'u devam ettirir.
+    None dönerse sıradaki domain için yeni bir doğrulama dosyası hazırdır
+    (iş bitmedi, durum tekrar 'ready' yapılmalı).
+    """
+    entry = _pending_http.get(job_id)
+    if entry is None:
         return CertbotResult(False, None, None, None, None, "Geçersiz veya süresi dolmuş iş")
-    entry = _pending_http[job_id]
     proc = entry.get("proc")
     temp_dir = entry.get("temp_dir")
     if not proc or not temp_dir:
         return CertbotResult(False, None, None, None, None, "İş bilgisi eksik")
-    try:
-        (temp_dir / "done").write_text("1", encoding="utf-8")
+
+    # Bekleyen hook'ları serbest bırak: dosya yüklendi, certbot devam edebilir
+    for ch in entry.get("challenges", []):
+        if not ch["released"]:
+            (Path(temp_dir) / f"done_{ch['file_name']}").write_text("1", encoding="utf-8")
+            ch["released"] = True
+
+    io_task = entry.get("io_task")
+    for _ in range(600):  # 300 sn
+        await asyncio.sleep(0.5)
+        if _register_new_challenges(entry):
+            return None
+        if io_task and io_task.done():
+            await _finalize_http_job(job_id, domain_id)
+            return entry.get("result")
+    proc.kill()
+    if io_task:
         try:
-            await asyncio.wait_for(proc.wait(), timeout=300.0)
-        except asyncio.TimeoutError:
-            proc.kill()
-            await proc.wait()
-            return CertbotResult(False, None, None, None, None, "Certbot zaman aşımı (5 dk)")
-        if proc.returncode != 0:
-            err = (await proc.stderr.read()).decode("utf-8", errors="replace").strip() if proc.stderr else ""
-            return CertbotResult(False, None, None, None, None, err or f"Çıkış kodu: {proc.returncode}")
-        sanitized = entry["domain"]
-        live_dir = CERTBOT_USER_DIR / "live" / sanitized
-        cert_path = live_dir / "cert.pem"
-        if not cert_path.exists():
-            return CertbotResult(False, None, None, None, None, "Sertifika dosyası oluşturulmadı")
-        return CertbotResult(
-            success=True,
-            cert_path=str(cert_path),
-            key_path=str(live_dir / "privkey.pem") if (live_dir / "privkey.pem").exists() else None,
-            chain_path=str(live_dir / "chain.pem") if (live_dir / "chain.pem").exists() else None,
-            fullchain_path=str(live_dir / "fullchain.pem") if (live_dir / "fullchain.pem").exists() else None,
-            error=None,
-        )
-    finally:
-        try:
-            shutil.rmtree(temp_dir, ignore_errors=True)
+            await io_task
         except Exception:
             pass
-        entry["proc"] = None
-        entry["temp_dir"] = None
+    result = CertbotResult(False, None, None, None, None, "Certbot zaman aşımı (5 dk)")
+    entry["result"] = result
+    entry["success"] = False
+    entry["error"] = result.error
+    entry["status"] = "error"
+    shutil.rmtree(temp_dir, ignore_errors=True)
+    entry["temp_dir"] = None
+    entry["proc"] = None
+    return result
 
 
 async def continue_certbot_dns(job_id: str) -> CertbotResult:
@@ -321,11 +444,11 @@ async def continue_certbot_dns(job_id: str) -> CertbotResult:
 
 
 def get_pending_http_file(job_id: str) -> tuple[str | None, str | None, str | None]:
-    """Bekleyen HTTP-01 işi için domain, dosya adı ve içeriği döndürür."""
+    """Bekleyen HTTP-01 işi için (doğrulanan) domain, dosya adı ve içeriği döndürür."""
     if job_id not in _pending_http:
         return None, None, None
     e = _pending_http[job_id]
-    return e.get("domain"), e.get("file_name"), e.get("file_content")
+    return e.get("challenge_domain") or e.get("domain"), e.get("file_name"), e.get("file_content")
 
 
 def get_pending_dns_txt(job_id: str) -> tuple[str | None, str | None]:
@@ -415,6 +538,8 @@ def get_pending_http_status(job_id: str) -> dict:
     payload = {
         "status": entry.get("status", "unknown"),
         "domain": entry.get("domain"),
+        "domains": entry.get("domains"),
+        "challenge_domain": entry.get("challenge_domain") or entry.get("domain"),
         "file_name": entry.get("file_name"),
         "file_content": entry.get("file_content"),
         "error": entry.get("error"),
@@ -444,21 +569,24 @@ async def _run_certbot_http_manual_task(job_id: str, domain: str, email: str, do
         entry["status"] = "error"
         entry["error"] = "Geçersiz domain"
         return
+    domains = expand_domains(domain)
+    entry["domains"] = domains
 
     temp_dir = Path(tempfile.mkdtemp(prefix="certbot_http_"))
+    # Hook her domain için ayrı çalışır: token'a özel dosyalara yazar,
+    # kendi done_<token> dosyası oluşana dek bekler.
     hook_script = temp_dir / "auth_hook.sh"
     hook_script.write_text(
         "#!/bin/bash\n"
-        f'echo "$CERTBOT_TOKEN" > "{temp_dir}/token.txt"\n'
-        f'echo "$CERTBOT_VALIDATION" > "{temp_dir}/validation.txt"\n'
-        f'while [ ! -f "{temp_dir}/done" ]; do sleep 1; done\n'
+        f'echo "$CERTBOT_DOMAIN" > "{temp_dir}/domain_$CERTBOT_TOKEN"\n'
+        f'echo "$CERTBOT_VALIDATION" > "{temp_dir}/validation_$CERTBOT_TOKEN"\n'
+        f'while [ ! -f "{temp_dir}/done_$CERTBOT_TOKEN" ]; do sleep 1; done\n'
         "exit 0\n",
         encoding="utf-8",
     )
     hook_script.chmod(0o755)
     entry["temp_dir"] = temp_dir
 
-    env = {**__import__("os").environ, "CERTBOT_HTTP_WAIT_DIR": str(temp_dir)}
     cmd = [
         certbot,
         "certonly",
@@ -468,8 +596,14 @@ async def _run_certbot_http_manual_task(job_id: str, domain: str, email: str, do
         "--agree-tos",
         "--email",
         email,
-        "-d",
+        "--cert-name",
         sanitized,
+        "--expand",
+        "--renew-with-new-domains",
+    ]
+    for name in domains:
+        cmd.extend(["-d", name])
+    cmd.extend([
         "--config-dir",
         str(CERTBOT_USER_DIR),
         "--work-dir",
@@ -478,26 +612,30 @@ async def _run_certbot_http_manual_task(job_id: str, domain: str, email: str, do
         str(CERTBOT_USER_LOGS),
         "--manual-auth-hook",
         str(hook_script),
-    ]
+    ])
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env=env,
+            env=os.environ.copy(),
         )
         entry["proc"] = proc
+        entry["io_task"] = asyncio.ensure_future(proc.communicate())
         for _ in range(180):
             await asyncio.sleep(0.5)
-            token_file = temp_dir / "token.txt"
-            val_file = temp_dir / "validation.txt"
-            if token_file.exists() and val_file.exists():
+            if _register_new_challenges(entry):
                 entry["status"] = "ready"
-                entry["file_name"] = token_file.read_text(encoding="utf-8").strip()
-                entry["file_content"] = val_file.read_text(encoding="utf-8").strip()
+                return
+            if entry["io_task"].done():
+                # Hiç doğrulama istenmedi: sertifika zaten geçerliydi ya da certbot hata verdi
+                await _finalize_http_job(job_id, domain_id)
                 return
         proc.kill()
-        await proc.wait()
+        try:
+            await entry["io_task"]
+        except Exception:
+            pass
         entry["status"] = "error"
         entry["error"] = "Doğrulama dosyası zaman aşımı (90 sn)"
     except Exception as e:
@@ -515,9 +653,13 @@ async def start_certbot_http_manual(domain: str, email: str, domain_id: int) -> 
     _pending_http[job_id] = {
         "status": "starting",
         "proc": None,
+        "io_task": None,
         "temp_dir": None,
         "domain_id": domain_id,
         "domain": _sanitize_domain(domain),
+        "domains": None,
+        "challenges": [],
+        "challenge_domain": None,
         "file_name": None,
         "file_content": None,
         "error": None,
@@ -537,24 +679,17 @@ async def _continue_certbot_http_task(job_id: str, domain_id: int) -> None:
     if not entry:
         return
     entry["status"] = "running"
-    result = await continue_certbot_http(job_id)
-    entry["result"] = result
-    entry["success"] = result.success
-    entry["error"] = result.error
-    entry["status"] = "done" if result.success else "error"
-
-    if result.success:
-        from app.crud import get_domain_by_id, refresh_ssl
-        from app.database import AsyncSessionLocal
-
-        async with AsyncSessionLocal() as db:
-            domain = await get_domain_by_id(db, domain_id)
-            if domain:
-                domain.cert_path = result.cert_path
-                domain.key_path = result.key_path
-                domain.chain_path = result.chain_path
-                await refresh_ssl(db, domain)
-                await db.commit()
+    result = await continue_certbot_http(job_id, domain_id)
+    if result is None:
+        # Sıradaki domain (örn. www) için yeni doğrulama dosyası hazır
+        entry["status"] = "ready"
+        return
+    if entry.get("status") not in {"done", "error"}:
+        # _finalize_http_job çalışmadıysa (örn. iş bilgisi eksik) durumu burada yaz
+        entry["result"] = result
+        entry["success"] = result.success
+        entry["error"] = result.error
+        entry["status"] = "done" if result.success else "error"
 
 
 async def start_continue_certbot_http(job_id: str, domain_id: int) -> tuple[bool, str | None]:

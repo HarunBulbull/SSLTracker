@@ -53,10 +53,12 @@ async def index(request: Request, db: AsyncSession = Depends(get_db)):
     completing = request.query_params.get("completing") == "1"
     renew_success = request.query_params.get("renew_success") == "1"
     challenge_domain = challenge_file_name = challenge_file_content = None
+    challenge_domains = None
     if challenge_job:
         status = get_pending_http_status(challenge_job)
+        challenge_domains = status.get("domains")
         if status.get("status") == "ready":
-            challenge_domain = status.get("domain")
+            challenge_domain = status.get("challenge_domain") or status.get("domain")
             challenge_file_name = status.get("file_name")
             challenge_file_content = status.get("file_content")
         elif not pending and not completing:
@@ -75,6 +77,7 @@ async def index(request: Request, db: AsyncSession = Depends(get_db)):
             "challenge_job": challenge_job,
             "challenge_domain_id": int(domain_id) if domain_id and domain_id.isdigit() else None,
             "challenge_domain": challenge_domain,
+            "challenge_domains": challenge_domains,
             "challenge_file_name": challenge_file_name,
             "challenge_file_content": challenge_file_content,
             "pending": pending,

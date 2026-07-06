@@ -45,6 +45,11 @@
     {% if challenge_job and challenge_file_name and challenge_file_content and challenge_domain_id %}
     <div class="rounded-lg border border-accent/50 bg-accent/10 p-4">
       <h3 class="font-semibold text-accent mb-2">Doğrulama dosyasını sunucuya yükleyin</h3>
+      {% if challenge_domains and challenge_domains|length > 1 %}
+      <p class="text-sm text-gray-400 mb-1">
+        Sertifika kapsamı: <strong>{{ challenge_domains | join(', ') }}</strong> — her domain için ayrı doğrulama dosyası sırayla istenir.
+      </p>
+      {% endif %}
       <p class="text-sm text-gray-400 mb-3">
         <strong>{{ challenge_domain }}</strong> için hazır dosyayı indirin, sunucuda
         <code>.well-known/acme-challenge/</code> klasörüne yükleyin (FTP/SFTP veya hosting paneli), ardından tamamlayın.
@@ -68,9 +73,10 @@
       <form action="{{ url_for('refresh_challenge_continue', domain_id=challenge_domain_id) }}" method="post">
         <input type="hidden" name="challenge_job" value="{{ challenge_job }}">
         <button type="submit" id="continue-challenge-btn" class="px-4 py-2 bg-accent hover:bg-blue-600 rounded font-medium text-sm">
-          Dosyayı yükledim, sertifika üretimini tamamla
+          Dosyayı yükledim, devam et
         </button>
       </form>
+      <p class="text-xs text-gray-500 mt-2">Kapsamda başka domain varsa (örn. www) sıradaki doğrulama dosyası bu ekranda tekrar gösterilir; yoksa sertifika üretimi tamamlanır.</p>
     </div>
     {% endif %}
     <section class="rounded-lg border border-gray-700/50 bg-surface/50 p-4">
@@ -164,7 +170,7 @@
     </section>
 
     <p class="text-sm text-gray-500">
-      <strong>Yenile</strong> ACME doğrulama dosyasını indirmenizi sağlar; bu dosyayı domain sunucusunda <code>.well-known/acme-challenge/</code> altına yükleyip “tamamla” deyin. Sertifikalar <code>certs/live/DOMAIN/</code> altında oluşur. Tablodaki <strong>İndir</strong> sütunu: .crt, fullchain, cabundle, .key.
+      <strong>Yenile</strong> ACME doğrulama dosyasını indirmenizi sağlar; bu dosyayı domain sunucusunda <code>.well-known/acme-challenge/</code> altına yükleyip “devam et” deyin. Ana domainler için sertifika <strong>www dahil</strong> üretilir (örn. <code>example.com</code> + <code>www.example.com</code>); her isim için ayrı doğrulama dosyası sırayla istenir. Sertifikalar <code>certs/live/DOMAIN/</code> altında oluşur. Tablodaki <strong>İndir</strong> sütunu: .crt, fullchain, cabundle, .key.
     </p>
   </div>
 {% endblock %}
@@ -223,14 +229,23 @@
   const completing = params.get('completing') === '1';
   const renewSuccess = params.get('renew_success') === '1';
   const hasChallengeFile = !!document.getElementById('download-challenge-btn');
+  const challengeFileName = {{ (challenge_file_name or '') | tojson }};
 
   if (renewSuccess && window.history.replaceState) {
     window.history.replaceState({}, '', '/');
   }
 
-  if (hasChallengeFile && challengeJob && isAutoDownloadEnabled() && !sessionStorage.getItem(`challenge-dl-${challengeJob}`)) {
-    triggerChallengeDownload(challengeJob);
-    sessionStorage.setItem(`challenge-dl-${challengeJob}`, '1');
+  // Anahtar dosya adına bağlı: aynı işte birden çok dosya (apex + www) sırayla inebilsin
+  function autoDownloadOnce(fileName) {
+    const key = `challenge-dl-${challengeJob}-${fileName || ''}`;
+    if (isAutoDownloadEnabled() && !sessionStorage.getItem(key)) {
+      triggerChallengeDownload(challengeJob);
+      sessionStorage.setItem(key, '1');
+    }
+  }
+
+  if (hasChallengeFile && challengeJob) {
+    autoDownloadOnce(challengeFileName);
   }
 
   async function pollRenewStatus() {
@@ -238,22 +253,12 @@
     try {
       const res = await fetch(`/api/renew-jobs/${challengeJob}/status`);
       const data = await res.json();
-      if (pending) {
+      if (pending || completing) {
         if (data.status === 'ready') {
-          if (isAutoDownloadEnabled()) {
-            triggerChallengeDownload(challengeJob);
-            sessionStorage.setItem(`challenge-dl-${challengeJob}`, '1');
-          }
+          // İlk dosya ya da kapsamdaki sıradaki domainin (örn. www) dosyası hazır
           window.location.href = `/?challenge_job=${challengeJob}&domain_id=${domainId}`;
           return;
         }
-        if (data.status === 'error') {
-          const msg = encodeURIComponent((data.error || 'Certbot hatası').slice(0, 400));
-          window.location.href = `/?certbot_error=${msg}`;
-          return;
-        }
-      }
-      if (completing) {
         if (data.status === 'done' && data.success) {
           window.location.href = `/?renew_success=1&domain_id=${domainId}`;
           return;
